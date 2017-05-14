@@ -12,6 +12,13 @@ library(ggplot2)
 library(zoo)
 library(scales)
 
+
+mycss <- "
+.shinysky-busy-indicator {
+  z-index: 1000;
+}
+"
+
 pass <- Sys.getenv('MJN_DB_PASS')
 
 pool <- dbPool(
@@ -40,7 +47,8 @@ getMaxDate <- function(table){
 
 dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos) {
   if(is.null(i_pos)) { i_pos = '%'}
-  sql <- sprintf("SELECT * from %s where 
+  if(sql_table == "ag_pos_data") {
+    sql <- sprintf("SELECT * from %s where 
                  date >= ?date_start and 
                  date <= ?date_end and 
                  brand like ?brand and
@@ -53,19 +61,49 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
                  channel like ?channel and
                  client like ?client and 
                  pos like ?pos;", sql_table)
-  query <- sqlInterpolate(pool, sql, 
-                          date_start = start, 
-                          date_end = end, 
-                          brand = i_brand, 
-                          format = i_format, 
-                          flavor = i_flavor,
-                          uom = i_uom,
-                          sku = i_sku,
-                          city = i_city,
-                          state = i_state,
-                          channel = i_channel,
-                          client = i_client,
-                          pos = i_pos)
+    
+    query <- sqlInterpolate(pool, sql, 
+                            date_start = start, 
+                            date_end = end, 
+                            brand = i_brand, 
+                            format = i_format, 
+                            flavor = i_flavor,
+                            uom = i_uom,
+                            sku = i_sku,
+                            city = i_city,
+                            state = i_state,
+                            channel = i_channel,
+                            client = i_client,
+                            pos = i_pos)
+  } else {
+    sql <- sprintf("SELECT * from %s where 
+                 date >= ?date_start and 
+                 date <= ?date_end and 
+                 brand like ?brand and
+                 format like ?format and
+                 flavor like ?flavor and
+                 uom like ?uom and
+                 description like ?sku and
+                 city like ?city and
+                 state like ?state and
+                 channel like ?channel and
+                 client like ?client;", sql_table)
+    
+    query <- sqlInterpolate(pool, sql, 
+                            date_start = start, 
+                            date_end = end, 
+                            brand = i_brand, 
+                            format = i_format, 
+                            flavor = i_flavor,
+                            uom = i_uom,
+                            sku = i_sku,
+                            city = i_city,
+                            state = i_state,
+                            channel = i_channel,
+                            client = i_client
+                            )
+  }
+  
   data <- dbGetQuery(pool, query)
   data <- tbl_df(data)
 }
@@ -108,11 +146,12 @@ ui <- dashboardPage(skin = "black",
                        ),
         radioButtons("gobernor",
                      label = h3("Pos or no Pos Data"),
-                     choices = list("With Pos Info" = 1, "Without Pos Info" = 2), selected = 1
+                     choices = list("With Pos Info" = 1, "Without Pos Info" = 2), selected = 2
                      )
         )
   ),
   dashboardBody(
+    tags$head(tags$style(HTML(mycss))),
     fluidRow(
       box(
         width = 6,
@@ -176,7 +215,9 @@ ui <- dashboardPage(skin = "black",
                     choices = getUniqueValues("pos_master", "CLIENT"),
                     selected = 'COPIDROGAS'
                     ),
-         uiOutput("pos")
+        conditionalPanel(condition = "output.gobernor",
+                         uiOutput("pos")
+                         )
       )
     ),
     fluidRow(
@@ -185,7 +226,7 @@ ui <- dashboardPage(skin = "black",
         status = "primary",
         width = 12,
         div(DT::dataTableOutput("raw"), style = "font-size: 90%")
-      ), div(busyIndicator(), style = "z-index: 1000")
+      )
     ),
     fluidRow(
       box(
@@ -199,7 +240,7 @@ ui <- dashboardPage(skin = "black",
                      resetOnNew = T
                      )
                    )
-        )
+        ),busyIndicator()
     )
   )
 )
@@ -207,6 +248,14 @@ ui <- dashboardPage(skin = "black",
 #mp <- dataRetrival('ag_pos_data', 'COPIDROGAS')
 
 server <- function(input, output, session) {
+  
+  output$gobernor <- reactive({
+    if(input$gobernor == 1){
+      TRUE
+    } else {
+      FALSE
+    }
+  })
   
   output$pos<- renderUI({
     selectInput("pos",
@@ -298,6 +347,9 @@ server <- function(input, output, session) {
 
   })
   
+  outputOptions(output, "gobernor", suspendWhenHidden = FALSE)  
+  
 }
+
 
 shinyApp(ui, server)
