@@ -24,9 +24,9 @@ pass <- Sys.getenv('MJN_DB_PASS')
 pool <- dbPool(
   drv = RPostgreSQL::PostgreSQL(max.con=100),
   dbname = "jds",
-  host = "10.96.8.104",
+  host = "localhost",
   user = "jds",
-  password = "mjn"
+  password = pass
 )
 
 getUniqueValues <- function(table, column){
