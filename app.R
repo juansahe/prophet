@@ -131,8 +131,55 @@ plotData <- function(data){
     geom_line(aes(y = SO, colour = "SO")) + 
     geom_line(aes(y = SI, colour = "SI")) +
     scale_x_date(name = "Dates", date_breaks = '1 month', date_labels = "%b %y") +
-    scale_y_continuous(name = "Units", labels = comma, breaks = pretty_breaks(n=10))
+    scale_y_continuous(name = "", labels = comma, breaks = pretty_breaks(n=10))
 }
+
+tablesRetrival <- function(raw_data, data) {
+  #start <- input$dti[1]
+  #end <- input$dti[2]
+  
+  i_var <- switch(raw_data,
+                  "Qty" = "qty",
+                  "Tons" = "tons",
+                  "Value" = "value")
+  
+  
+  mp <- data %>% 
+    select(date, i_var = one_of(i_var), type) %>% 
+    group_by(date, type) %>% 
+    summarise(i_var = sum(i_var)) %>% 
+    spread(type, i_var) %>% 
+    arrange(date)
+  
+  mp$av3 <- rollMeanRetrival(mp)
+  mp$DOIe <- ifelse(mp$av3 == 0,0, (mp$IN/mp$av3)*30)
+  
+  mp$av3 <- NULL  
+  mp <- gather(mp, type, i_var, 2:ncol(mp))
+  mp <- spread(mp, date, i_var)
+  
+  names(mp)[2:ncol(mp)] <- format(as.Date(colnames(mp[2:ncol(mp)]), format = "%Y-%m-%d"), "%b/%y")
+  
+  datatable(
+    data = mp,
+    colnames = c('TYPE' = 'type'),
+    extensions = 'FixedColumns',
+    selection = 'single',
+    rownames = F,
+    options = list(
+      dom = 't',
+      ordering = F,
+      scrollX = T,
+      fixedColumns = list(leftColumns = 1)
+      #autoWidth = T,
+      #columnDefs = list(list(width = '65px', targets = "_all"))
+      #pageLength = 10
+    ) 
+  ) %>% formatCurrency(2:ncol(mp), currency = "", interval = 3, mark = ",", digits = 0)
+}
+
+
+###
 
 ui <- dashboardPage(skin = "black",
   dashboardHeader(title = "Prophet Data Management - MJN -"),
@@ -221,11 +268,14 @@ ui <- dashboardPage(skin = "black",
       )
     ),
     fluidRow(
-      box(
+      tabBox(
+        id = "raw_data",
         title = "Raw Data",
-        status = "primary",
+        #status = "primary",
         width = 12,
-        div(DT::dataTableOutput("raw"), style = "font-size: 90%")
+        tabPanel("Qty", div(DT::dataTableOutput("raw_qty"), style = "font-size: 90%")),
+        tabPanel("Tons", div(DT::dataTableOutput("raw_ton"), style = "font-size: 90%")),
+        tabPanel("Value", div(DT::dataTableOutput("raw_val"), style = "font-size: 90%"))
       )
     ),
     fluidRow(
@@ -248,6 +298,7 @@ ui <- dashboardPage(skin = "black",
 #mp <- dataRetrival('ag_pos_data', 'COPIDROGAS')
 
 server <- function(input, output, session) {
+  
   
   output$gobernor <- reactive({
     if(input$gobernor == 1){
@@ -285,43 +336,17 @@ server <- function(input, output, session) {
                  input$pos)
   })
   
-  output$raw <- DT::renderDataTable({
 
-    #start <- input$dti[1]
-    #end <- input$dti[2]
+  output$raw_qty <- DT::renderDataTable({
+    tablesRetrival(input$raw_data, mp())
+  })
   
-    mp <- mp() %>% 
-      select(date, qty, type) %>% 
-      group_by(date, type) %>% 
-      summarise(qty = sum(qty)) %>% 
-      spread(type, qty) %>% 
-      arrange(date)
-    
-    mp$av3 <- rollMeanRetrival(mp)
-    mp$DOIe <- ifelse(mp$av3 == 0,0, (mp$IN/mp$av3)*30)
-    
-    mp$av3 <- NULL  
-    mp <- gather(mp, type, qty, 2:ncol(mp))
-    mp <- spread(mp, date, qty)
-      
-    names(mp)[2:ncol(mp)] <- format(as.Date(colnames(mp[2:ncol(mp)]), format = "%Y-%m-%d"), "%b/%y")
-    
-    datatable(
-      data = mp,
-      colnames = c('TYPE' = 'type'),
-      extensions = 'FixedColumns',
-      selection = 'single',
-      rownames = F,
-      options = list(
-        dom = 't',
-        ordering = F,
-        scrollX = T,
-        fixedColumns = list(leftColumns = 1)
-        #autoWidth = T,
-        #columnDefs = list(list(width = '65px', targets = "_all"))
-        #pageLength = 10
-      ) 
-    ) %>% formatCurrency(2:ncol(mp), currency = "", interval = 3, mark = ",", digits = 0)
+  output$raw_ton <- DT::renderDataTable({
+    tablesRetrival(input$raw_data, mp())
+  })
+  
+  output$raw_val <- DT::renderDataTable({
+    tablesRetrival(input$raw_data, mp())
   })
   
   output$pto <- renderPlot({
@@ -330,12 +355,17 @@ server <- function(input, output, session) {
     #end <- input$dti[2]
     
     #mp <- dataRetrival('ag_pos_data', input$client, as.Date(input$dti[1]), as.Date(input$dti[2]))
+    
+    i_var <- switch(input$raw_data,
+                    "Qty" = "qty",
+                    "Tons" = "tons",
+                    "Value" = "value")
   
     mp <- mp() %>% 
-      select(date, qty, type) %>% 
+      select(date, i_var = one_of(i_var), type) %>% 
       group_by(date, type) %>% 
-      summarise(qty = sum(qty)) %>% 
-      spread(type, qty) %>% 
+      summarise(i_var = sum(i_var)) %>% 
+      spread(type, i_var) %>% 
       arrange(date)
     
     mp$av3 <- rollMeanRetrival(mp)
