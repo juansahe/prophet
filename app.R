@@ -24,9 +24,9 @@ pass <- Sys.getenv('MJN_DB_PASS')
 pool <- dbPool(
   drv = RPostgreSQL::PostgreSQL(max.con=100),
   dbname = "jds",
-  host = "localhost",
+  host = "10.96.8.104",
   user = "jds",
-  password = pass
+  password = "mjn"
 )
 
 getUniqueValues <- function(table, column){
@@ -138,6 +138,9 @@ tablesRetrival <- function(raw_data, data) {
   #start <- input$dti[1]
   #end <- input$dti[2]
   
+  i_currency <- ""
+  i_digits <- 1
+  
   i_var <- switch(raw_data,
                   "Qty" = "qty",
                   "Tons" = "tons",
@@ -175,14 +178,21 @@ tablesRetrival <- function(raw_data, data) {
       #columnDefs = list(list(width = '65px', targets = "_all"))
       #pageLength = 10
     ) 
-  ) %>% formatCurrency(2:ncol(mp), currency = "", interval = 3, mark = ",", digits = 0)
+  ) %>% formatCurrency(2:ncol(mp), currency = i_currency, interval = 3, mark = ",", digits = i_digits) %>% 
+    formatStyle('TYPE', target = 'row', backgroundColor = styleEqual(c("DOIe"), c("aliceblue")))
 }
 
 
 ###
 
+CustomHeader <- dashboardHeader(title = "Prophet Data Management - MJN -")
+CustomHeader$children[[3]]$children <- list(
+  div(style="float:right;height:50px;margin-right:5px;padding-top:5px;", downloadButton("csv", "CSV")),
+  div(style="float:right;height:50px;margin-right:5px;padding-top:5px;", downloadButton("tab", "TAB")) 
+)
+
 ui <- dashboardPage(skin = "black",
-  dashboardHeader(title = "Prophet Data Management - MJN -"),
+  CustomHeader,
   dashboardSidebar(
     sidebarMenu(
         dateRangeInput("dti",
@@ -207,32 +217,41 @@ ui <- dashboardPage(skin = "black",
         solidHeader = T,
         collapsible = T,
         collapsed = T,
-        
-        selectInput("brand",
-                    label = "Brand",
-                    choices = getUniqueValues("codes_master", "BRAND"),
-                    selected = '%'
-                    ),
-        selectInput("format",
-                    label = "Format",
-                    choices = getUniqueValues("codes_master", "FORMAT"),
-                    selected = '%'
-                    ),
-        selectInput("flavor",
-                    label = "Flavor",
-                    choices = getUniqueValues("codes_master", "FLAVOR"),
-                    selected = '%'
-        ),
-        selectInput("uom",
-                    label = "Uom",
-                    choices = getUniqueValues("codes_master", "UOM"),
-                    selected = '%'
-        ),
-        selectInput("sku",
-                    label = "Sku",
-                    choices = getUniqueValues("codes_master", "DESCRIPTION"),
-                    selected = '%'
-                    )
+          column(6,
+                 selectInput("brand",
+                             label = "Brand",
+                             choices = getUniqueValues("codes_master", "BRAND"),
+                             selected = '%'
+                 )
+          ),
+          column(6,
+                 selectInput("format",
+                             label = "Format",
+                             choices = getUniqueValues("codes_master", "FORMAT"),
+                             selected = '%'
+                 )
+          ),
+          column(4,
+                 selectInput("flavor",
+                             label = "Flavor",
+                             choices = getUniqueValues("codes_master", "FLAVOR"),
+                             selected = '%'
+                 )
+          ),
+          column(4,
+                 selectInput("uom",
+                             label = "Uom",
+                             choices = getUniqueValues("codes_master", "UOM"),
+                             selected = '%'
+                 )
+          ),
+          column(4,
+                 selectInput("sku",
+                             label = "Sku",
+                             choices = getUniqueValues("codes_master", "DESCRIPTION"),
+                             selected = '%'
+                 )
+          )
         ),
       box(
         width = 6,
@@ -241,30 +260,39 @@ ui <- dashboardPage(skin = "black",
         solidHeader = T,
         collapsible = T,
         collapsed = T,
-        
-        selectInput("city",
-                    label = "City",
-                    choices = getUniqueValues("pos_master", "CITY"),
-                    selected = '%'
-                    ),
-        selectInput("state",
-                    label = "State",
-                    choices = getUniqueValues("pos_master", "STATE"),
-                    selected = '%'
-                    ),
-        selectInput("channel",
-                    label = "Channel",
-                    choices = getUniqueValues("pos_master", "CHANNEL"),
-                    selected = '%'
-                    ),
-        selectInput("client",
-                    label = "Client",
-                    choices = getUniqueValues("pos_master", "CLIENT"),
-                    selected = 'COPIDROGAS'
-                    ),
-        conditionalPanel(condition = "output.gobernor",
-                         uiOutput("pos")
-                         )
+        column(6, 
+          selectInput("channel",
+                      label = "Channel",
+                      choices = getUniqueValues("pos_master", "CHANNEL"),
+                      selected = '%'
+                      )
+              ),
+        column(6,
+          selectInput("client",
+                      label = "Client",
+                      choices = getUniqueValues("pos_master", "CLIENT"),
+                      selected = 'COPIDROGAS'
+                      )
+              ),
+        column(4,
+          selectInput("city",
+                      label = "City",
+                      choices = getUniqueValues("pos_master", "CITY"),
+                      selected = '%'
+                      )
+              ),
+        column(4,
+          selectInput("state",
+                      label = "State",
+                      choices = getUniqueValues("pos_master", "STATE"),
+                      selected = '%'
+                      )
+              ),
+        column(4,
+          conditionalPanel(condition = "output.gobernor",
+                           uiOutput("pos")
+                           )
+        )
       )
     ),
     fluidRow(
@@ -376,6 +404,24 @@ server <- function(input, output, session) {
     plotData(mp)
 
   })
+  
+  output$csv <- downloadHandler(
+    filename = function(){
+      paste('data', Sys.Date(), '.csv', sep = '')
+    },
+    content = function(file){
+      write.csv(mp(), file, row.names = F)
+    }
+  )
+  
+  output$tab <- downloadHandler(
+    filename = function(){
+      paste('data', Sys.Date(), '.txt', sep = '')
+    },
+    content = function(con){
+      write.table(mp(), con, sep="\t", row.names = F)
+    }
+  )
   
   outputOptions(output, "gobernor", suspendWhenHidden = FALSE)  
   
