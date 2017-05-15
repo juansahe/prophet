@@ -34,6 +34,11 @@ getUniqueValues <- function(table, column){
   choices <-rbind("%",  dbGetQuery(pool, sql))
 }
 
+getUniqueValuesSolo <- function(table, column){
+  sql <- sprintf("SELECT DISTINCT %s FROM %s;", column, table)
+  choices <-dbGetQuery(pool, sql)
+}
+
 getUniqueValuesWithPrecedent <- function(table, column, conditional_column, i_condition){
   sql <- sprintf("SELECT DISTINCT %s FROM %s WHERE CLIENT like ?condition", column, table, conditional_column)
   query <- sqlInterpolate(pool, sql, condition = i_condition)
@@ -46,66 +51,53 @@ getMaxDate <- function(table){
 }
 
 dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos) {
-  if(is.null(i_pos)) { i_pos = '%'}
-  if(sql_table == "ag_pos_data") {
-    sql <- sprintf("SELECT * from %s where 
-                 date >= ?date_start and 
-                 date <= ?date_end and 
-                 brand like ?brand and
-                 format like ?format and
-                 flavor like ?flavor and
-                 uom like ?uom and
-                 description like ?sku and
-                 city like ?city and
-                 state like ?state and
-                 channel like ?channel and
-                 client like ?client and 
-                 pos like ?pos;", sql_table)
-    
-    query <- sqlInterpolate(pool, sql, 
-                            date_start = start, 
-                            date_end = end, 
-                            brand = i_brand, 
-                            format = i_format, 
-                            flavor = i_flavor,
-                            uom = i_uom,
-                            sku = i_sku,
-                            city = i_city,
-                            state = i_state,
-                            channel = i_channel,
-                            client = i_client,
-                            pos = i_pos)
+  
+  if(length(i_channel) == 1) {
+    #ff <- paste0('channel %like% ', paste0("'", i_channel, "'"))
+    .dots = list(~channel %like% i_channel)
   } else {
-    sql <- sprintf("SELECT * from %s where 
-                 date >= ?date_start and 
-                 date <= ?date_end and 
-                 brand like ?brand and
-                 format like ?format and
-                 flavor like ?flavor and
-                 uom like ?uom and
-                 description like ?sku and
-                 city like ?city and
-                 state like ?state and
-                 channel like ?channel and
-                 client like ?client;", sql_table)
-    
-    query <- sqlInterpolate(pool, sql, 
-                            date_start = start, 
-                            date_end = end, 
-                            brand = i_brand, 
-                            format = i_format, 
-                            flavor = i_flavor,
-                            uom = i_uom,
-                            sku = i_sku,
-                            city = i_city,
-                            state = i_state,
-                            channel = i_channel,
-                            client = i_client
-                            )
+    #ff <- paste0('channel %in% ', i_channel)
+    .dots = list(~channel %in% i_channel)
   }
   
-  data <- dbGetQuery(pool, query)
-  data <- tbl_df(data)
+                       
+  if(is.null(i_pos)) { i_pos = '%'}
+  if(sql_table == "ag_pos_data") {
+    
+    #i_channel <- noquote(sprintf("(%s)",toString(i_channel)))
+
+    src_pool(pool) %>% tbl(sql_table) %>% 
+      filter(date >= start & date <= end &
+               brand %like% i_brand &
+               format %like% i_format &
+               flavor %like% i_flavor &
+               uom %like% i_uom &
+               description %like% i_sku &
+               city %like% i_city &
+               state %like% i_state &
+               client %like% i_client &
+               #channel %in% i_channel &
+               pos %like% i_pos) %>% 
+      filter_(.dots = .dots) %>% collect(n = Inf)
+  } else {
+    
+    src_pool(pool) %>% tbl(sql_table) %>% 
+      filter(date >= start & date <= end &
+               brand %like% i_brand &
+               format %like% i_format &
+               flavor %like% i_flavor &
+               uom %like% i_uom &
+               description %like% i_sku &
+               city %like% i_city &
+               state %like% i_state &
+               #channel %in% i_channel &
+               client %like% i_client)  %>% 
+      filter_(.dots = .dots) %>% collect(n = Inf)
+    
+  }
+  
+  #data <- dbGetQuery(pool, query)
+  #data <- tbl_df(data)
 }
 
 rollMeanRetrival <- function(data){
@@ -202,7 +194,7 @@ ui <- dashboardPage(skin = "black",
                        startview = 'months'
                        ),
         radioButtons("gobernor",
-                     label = h3("Pos or no Pos Data"),
+                     label = h3("Pos Data"),
                      choices = list("With Pos Info" = 1, "Without Pos Info" = 2), selected = 2
                      )
         )
@@ -263,15 +255,16 @@ ui <- dashboardPage(skin = "black",
         column(6, 
           selectInput("channel",
                       label = "Channel",
-                      choices = getUniqueValues("pos_master", "CHANNEL"),
-                      selected = '%'
+                      multiple = T,
+                      choices = getUniqueValuesSolo("pos_master", "CHANNEL"),
+                      selected =c('DRUG WHOLESALERS ')
                       )
               ),
         column(6,
           selectInput("client",
                       label = "Client",
                       choices = getUniqueValues("pos_master", "CLIENT"),
-                      selected = 'COPIDROGAS'
+                      selected = '%'
                       )
               ),
         column(4,
