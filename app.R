@@ -142,12 +142,45 @@ tablesRetrival <- function(raw_data, data) {
   mp <- data %>% 
     select(date, i_var = one_of(i_var), type) %>% 
     group_by(date, type) %>% 
-    summarise(i_var = sum(i_var)) %>% 
+    summarise(i_var = sum(i_var, na.rm = T)) %>% 
     spread(type, i_var) %>% 
     arrange(date)
   
   mp$av3 <- rollMeanRetrival(mp)
   mp$DOIe <- ifelse(mp$av3 == 0,0, (mp$IN/mp$av3)*30)
+  
+  #mp$DOIr <- 
+  
+  rpi <- data %>% 
+    filter(regular_doi == 'Y' & cedi == 'WHS' & type == 'IN') %>% 
+    select(date, i_var = one_of(i_var), type) %>% 
+    group_by(date, type) %>% 
+    summarise(i_var = sum(i_var, na.rm = T))
+  if(dim(rpi)[1] == 0) {
+    rpi <- 0
+  } else {
+    rpi <- rpi %>% spread(type, i_var) %>% arrange(date)
+  }
+  
+  rpo <- data %>% 
+    filter(regular_doi == 'Y' & type == 'SO') %>% 
+    select(date, i_var = one_of(i_var), type) %>% 
+    group_by(date, type) %>% 
+    summarise(i_var = sum(i_var, na.rm = T))
+  if(dim(rpo)[1] == 0) {
+    rpo <- 0
+  } else {
+    rpo <- rpo %>% spread(type, i_var) %>% arrange(date)
+  }
+  
+  doir <- inner_join(rpi, rpo, by=c("date"))
+  doir$av3 <- rollMeanRetrival(doir)
+  doir$DOIr <- ifelse(doir$av3 == 0,0, (doir$IN/doir$av3)*30)
+  
+  doir <- doir %>% select(date, DOIr)
+      
+  
+  mp <- inner_join(mp, doir, by=c("date"))
   
   mp$av3 <- NULL  
   mp <- gather(mp, type, i_var, 2:ncol(mp))
@@ -171,7 +204,7 @@ tablesRetrival <- function(raw_data, data) {
       #pageLength = 10
     ) 
   ) %>% formatCurrency(2:ncol(mp), currency = i_currency, interval = 3, mark = ",", digits = i_digits) %>% 
-    formatStyle('TYPE', target = 'row', backgroundColor = styleEqual(c("DOIe"), c("aliceblue")))
+    formatStyle('TYPE', target = 'row', backgroundColor = styleEqual(c("DOIe", "DOIr"), c("lightblue", "gold")))
 }
 
 
@@ -257,7 +290,7 @@ ui <- dashboardPage(skin = "black",
                       label = "Channel",
                       multiple = T,
                       choices = getUniqueValuesSolo("pos_master", "CHANNEL"),
-                      selected =c('DRUG WHOLESALERS ')
+                      selected =c('DRUG WHOLESALERS ', 'HOSPITAL SALES', 'PHARMACY CHAINS ', 'PRICE CLUBS', 'WHOLESALERS', 'GENERIC', 'SUPERMARKETS')
                       )
               ),
         column(6,
@@ -385,7 +418,7 @@ server <- function(input, output, session) {
     mp <- mp() %>% 
       select(date, i_var = one_of(i_var), type) %>% 
       group_by(date, type) %>% 
-      summarise(i_var = sum(i_var)) %>% 
+      summarise(i_var = sum(i_var, na.rm = T)) %>% 
       spread(type, i_var) %>% 
       arrange(date)
     
