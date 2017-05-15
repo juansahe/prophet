@@ -290,7 +290,7 @@ ui <- dashboardPage(skin = "black",
                       label = "Channel",
                       multiple = T,
                       choices = getUniqueValuesSolo("pos_master", "CHANNEL"),
-                      selected =c('DRUG WHOLESALERS ', 'HOSPITAL SALES', 'PHARMACY CHAINS ', 'PRICE CLUBS', 'WHOLESALERS', 'GENERIC', 'SUPERMARKETS')
+                      selected =c('DRUG WHOLESALERS ', 'PHARMACY CHAINS ', 'PRICE CLUBS', 'WHOLESALERS', 'GENERIC', 'SUPERMARKETS ')
                       )
               ),
         column(6,
