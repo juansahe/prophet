@@ -11,7 +11,7 @@ library(lubridate)
 library(ggplot2)
 library(zoo)
 library(scales)
-#library(prophet)
+library(prophet)
 
 
 mycss <- "
