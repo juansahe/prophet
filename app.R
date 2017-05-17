@@ -25,9 +25,9 @@ pass <- Sys.getenv('MJN_DB_PASS')
 pool <- dbPool(
   drv = RPostgreSQL::PostgreSQL(max.con=100),
   dbname = "jds",
-  host = "localhost",
+  host = "10.96.8.104",
   user = "jds",
-  password = pass
+  password = "mjn"
 )
 
 getUniqueValues <- function(table, column){
@@ -101,28 +101,28 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
   #data <- tbl_df(data)
 }
 
-rollMeanRetrival <- function(data){
-  if(is.null(data)){
+rollMeanRetrival <- function(i_data){
+  if(is.null(i_data)){
     ro <- 0
   } else {
-    ro <- rollmean(data, 3, align='right', fill = 0)
+    ro <- rollmean(i_data, 3, align='right', fill = 0)
   }
 }
 
-plotData <- function(data){
-  if(is.null(data$IN)){
-    data$IN <- 0
+plotData <- function(i_data){
+  if(is.null(i_data$IN)){
+    i_data$IN <- 0
   }
-  if(is.null(data$SO)){
-    data$SO <- 0
+  if(is.null(i_data$SO)){
+    i_data$SO <- 0
   }
-  if(is.null(data$SI)){
-    data$SI <- 0
+  if(is.null(i_data$SI)){
+    i_data$SI <- 0
   }
   
   end <- getMaxDate('trans_data')
   
-  ggplot2::ggplot(data, aes(date)) + 
+  ggplot2::ggplot(i_data, aes(date)) + 
     geom_bar(aes(y = IN), stat = "identity", alpha = 0.4, fill = "black") + 
     geom_bar(aes(y = f_in), stat = "identity", alpha = 0.4, fill = "grey") +
     geom_line(aes(y = SO, colour = "Sell out")) + 
@@ -136,41 +136,41 @@ plotData <- function(data){
     theme(legend.title = element_blank())
 }
 
-initSellInCalculation <- function(data){
-  data$goal <- 70 #fix get goal form db
-  data$av3 <- rollMeanRetrival(data$yhat)
-  data <- mutate(data, temp = (av3/30)*goal)
+initSellInCalculation <- function(i_data){
+  i_data$goal <- 70 #fix get goal form db
+  i_data$av3 <- rollMeanRetrival(i_data$yhat)
+  i_data <- mutate(i_data, temp = (av3/30)*goal)
   
-  if(!'IN' %in% colnames(data)) {
-    data$f_sellin <- 0
-    data$f_in <- 0
+  if(!'IN' %in% colnames(i_data)) {
+    i_data$f_sellin <- 0
+    i_data$f_in <- 0
   } else {
-    data <- mutate(data, f_sellin = ifelse((temp-(lag(IN)-av3))<0,0,(temp-(lag(IN)-av3))))
-    data <- mutate(data, f_in = lag(IN) + f_sellin - av3)
+    i_data <- mutate(i_data, f_sellin = ifelse((temp-(lag(IN)-av3))<0,0,(temp-(lag(IN)-av3))))
+    i_data <- mutate(i_data, f_in = lag(IN) + f_sellin - av3)
   }
-  return(data)
+  return(i_data)
 }
 
-seqSellInCalculation <- function(n, data) {
-  if(!'IN' %in% colnames(data)) {
-    data$f_sellin <- 0
-    data$f_in <- 0
+seqSellInCalculation <- function(n, i_data) {
+  if(!'IN' %in% colnames(i_data)) {
+    i_data$f_sellin <- 0
+    i_data$f_in <- 0
   } else {
     for(i in 1:n){
-      data <- mutate(data, f_sellin = ifelse((temp-(lag(f_in)-av3))<0,0,(temp-(lag(f_in)-av3))))
-      data <- mutate(data, f_in = lag(f_in) + f_sellin - av3)
+      i_data <- mutate(i_data, f_sellin = ifelse((temp-(lag(f_in)-av3))<0,0,(temp-(lag(f_in)-av3))))
+      i_data <- mutate(i_data, f_in = lag(f_in) + f_sellin - av3)
     }
   }
-  return(data)
+  return(i_data)
 } 
 
-forecastEstimation <- function(data){
+forecastEstimation <- function(i_data){
   var <- 'SO'
-  if(!var %in% colnames(data)) {
+  if(!var %in% colnames(i_data)) {
     var <- 'SI'
   } 
   
-  fcst <- data %>% select(ds=date, y=get(var)) #%>% mutate(cap = max(y)*1.1)
+  fcst <- i_data %>% select(ds=date, y=get(var)) #%>% mutate(cap = max(y)*1.1)
   model <- prophet::prophet(fcst, growth = "linear", yearly.seasonality = T, weekly.seasonality = F, changepoint.prior.scale = 0.6)
   future <- make_future_dataframe(model, periods = 10, freq = "month") #make periods dynamic
   #future$cap <- max(fcst$cap)
@@ -178,7 +178,7 @@ forecastEstimation <- function(data){
   #plot(model, forecast)
   
   ff <- forecast %>% select(date = ds, yhat, yhat_lower, yhat_upper)
-  d <- left_join(ff, data, by=c("date"))
+  d <- left_join(ff, i_data, by=c("date"))
   
   end <- getMaxDate('trans_data')
   
@@ -189,7 +189,7 @@ forecastEstimation <- function(data){
   return(d)
 }
 
-tablesRetrival <- function(raw_data, data) {
+tablesRetrival <- function(raw_data, i_data) {
   #start <- input$dti[1]
   #end <- input$dti[2]
   
@@ -202,7 +202,7 @@ tablesRetrival <- function(raw_data, data) {
                   "Value" = "value")
   
   
-  mp <- data %>% 
+  mp <- i_data %>% 
     select(date, i_var = one_of(i_var), type) %>% 
     group_by(date, type) %>% 
     summarise(i_var = sum(i_var, na.rm = T)) %>% 
@@ -214,7 +214,7 @@ tablesRetrival <- function(raw_data, data) {
   
   #mp$DOIr <- 
   
-  rpi <- data %>% 
+  rpi <- i_data %>% 
     filter(regular_doi == 'Y' & cedi == 'WHS' & type == 'IN') %>% 
     select(date, i_var = one_of(i_var), type) %>% 
     group_by(date, type) %>% 
@@ -225,7 +225,7 @@ tablesRetrival <- function(raw_data, data) {
     rpi <- rpi %>% spread(type, i_var) %>% arrange(date)
   }
   
-  rpo <- data %>% 
+  rpo <- i_data %>% 
     filter(regular_doi == 'Y' & type == 'SO') %>% 
     select(date, i_var = one_of(i_var), type) %>% 
     group_by(date, type) %>% 
@@ -250,6 +250,7 @@ tablesRetrival <- function(raw_data, data) {
   
   mp <- d %>% select(-yhat_lower, -yhat_upper, -av3, -goal, -temp, z_SO = yhat, z_SI = f_sellin, z_IN = f_in)
   
+  end <- getMaxDate('trans_data')
   mp[is.na(mp)] <- 0
   mp %>% mutate(z_SO = ifelse(z_SO < 0, 0, z_SO))
   mp <- mp %>% mutate(z_SO = ifelse(date <= end$date, 0, z_SO))
