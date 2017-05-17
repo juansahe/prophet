@@ -11,6 +11,7 @@ library(lubridate)
 library(ggplot2)
 library(zoo)
 library(scales)
+#library(prophet)
 
 
 mycss <- "
@@ -46,11 +47,11 @@ getUniqueValuesWithPrecedent <- function(table, column, conditional_column, i_co
 }
 
 getMaxDate <- function(table){
-  sql <- sprintf("select date from trans_data order by date desc limit 1;", table)
+  sql <- sprintf("select date from %s order by date desc limit 1;", table)
   dbGetQuery(pool, sql)
 }
 
-dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos) {
+dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos_name) {
   
   if(length(i_channel) == 1) {
     #ff <- paste0('channel %like% ', paste0("'", i_channel, "'"))
@@ -61,7 +62,7 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
   }
   
                        
-  if(is.null(i_pos)) { i_pos = '%'}
+  if(is.null(i_pos_name)) { i_pos_name = '%'}
   if(sql_table == "ag_pos_data") {
     
     #i_channel <- noquote(sprintf("(%s)",toString(i_channel)))
@@ -77,7 +78,7 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
                state %like% i_state &
                client %like% i_client &
                #channel %in% i_channel &
-               pos %like% i_pos) %>% 
+               pos_name %like% i_pos_name) %>% 
       filter_(.dots = .dots) %>% collect(n = Inf)
   } else {
     
@@ -101,10 +102,10 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
 }
 
 rollMeanRetrival <- function(data){
-  if(is.null(data$SO)){
+  if(is.null(data)){
     ro <- 0
   } else {
-    ro <- rollmean(data$SO, 3, align='right', fill = 0)
+    ro <- rollmean(data, 3, align='right', fill = 0)
   }
 }
 
@@ -119,11 +120,73 @@ plotData <- function(data){
     data$SI <- 0
   }
   
-  ggplot2::ggplot(data, aes(date)) + geom_bar(aes(y = IN), stat = "identity", alpha = 0.4, fill = "black") + 
-    geom_line(aes(y = SO, colour = "SO")) + 
-    geom_line(aes(y = SI, colour = "SI")) +
+  end <- getMaxDate('trans_data')
+  
+  ggplot2::ggplot(data, aes(date)) + 
+    geom_bar(aes(y = IN), stat = "identity", alpha = 0.4, fill = "black") + 
+    geom_bar(aes(y = f_in), stat = "identity", alpha = 0.4, fill = "grey") +
+    geom_line(aes(y = SO, colour = "Sell out")) + 
+    geom_line(aes(y = SI, colour = "Sell In")) +
+    geom_line(aes(y= yhat, colour = "FCST Sell Out"), linetype = 2) +
+    geom_line(aes(y = f_sellin, colour = "FCST Sell In"), linetype = 2 ) +
+    geom_vline(xintercept = as.numeric(as.Date(end$date)), linetype = 2) +
+    geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper), fill = "darkmagenta", alpha = 0.1) +
     scale_x_date(name = "Dates", date_breaks = '1 month', date_labels = "%b %y") +
-    scale_y_continuous(name = "", labels = comma, breaks = pretty_breaks(n=10))
+    scale_y_continuous(name = "", labels = comma, breaks = pretty_breaks(n=10)) + 
+    theme(legend.title = element_blank())
+}
+
+initSellInCalculation <- function(data){
+  data$goal <- 70 #fix get goal form db
+  data$av3 <- rollMeanRetrival(data$yhat)
+  data <- mutate(data, temp = (av3/30)*goal)
+  
+  if(!'IN' %in% colnames(data)) {
+    data$f_sellin <- 0
+    data$f_in <- 0
+  } else {
+    data <- mutate(data, f_sellin = ifelse((temp-(lag(IN)-av3))<0,0,(temp-(lag(IN)-av3))))
+    data <- mutate(data, f_in = lag(IN) + f_sellin - av3)
+  }
+  return(data)
+}
+
+seqSellInCalculation <- function(n, data) {
+  if(!'IN' %in% colnames(data)) {
+    data$f_sellin <- 0
+    data$f_in <- 0
+  } else {
+    for(i in 1:n){
+      data <- mutate(data, f_sellin = ifelse((temp-(lag(f_in)-av3))<0,0,(temp-(lag(f_in)-av3))))
+      data <- mutate(data, f_in = lag(f_in) + f_sellin - av3)
+    }
+  }
+  return(data)
+} 
+
+forecastEstimation <- function(data){
+  var <- 'SO'
+  if(!var %in% colnames(data)) {
+    var <- 'SI'
+  } 
+  
+  fcst <- data %>% select(ds=date, y=get(var)) #%>% mutate(cap = max(y)*1.1)
+  model <- prophet::prophet(fcst, growth = "linear", yearly.seasonality = T, weekly.seasonality = F, changepoint.prior.scale = 0.6)
+  future <- make_future_dataframe(model, periods = 10, freq = "month") #make periods dynamic
+  #future$cap <- max(fcst$cap)
+  forecast <- predict(model, future)
+  #plot(model, forecast)
+  
+  ff <- forecast %>% select(date = ds, yhat, yhat_lower, yhat_upper)
+  d <- left_join(ff, data, by=c("date"))
+  
+  end <- getMaxDate('trans_data')
+  
+  d <- initSellInCalculation(d)
+  n <- which(d$date == end$date) - 1
+  d <- seqSellInCalculation(n, d)
+  
+  return(d)
 }
 
 tablesRetrival <- function(raw_data, data) {
@@ -143,10 +206,10 @@ tablesRetrival <- function(raw_data, data) {
     select(date, i_var = one_of(i_var), type) %>% 
     group_by(date, type) %>% 
     summarise(i_var = sum(i_var, na.rm = T)) %>% 
-    spread(type, i_var) %>% 
+    spread(type, i_var, fill = 0) %>% 
     arrange(date)
   
-  mp$av3 <- rollMeanRetrival(mp)
+  mp$av3 <- rollMeanRetrival(mp$SO)
   mp$DOIe <- ifelse(mp$av3 == 0,0, (mp$IN/mp$av3)*30)
   
   #mp$DOIr <- 
@@ -173,16 +236,34 @@ tablesRetrival <- function(raw_data, data) {
     rpo <- rpo %>% spread(type, i_var) %>% arrange(date)
   }
   
-  doir <- inner_join(rpi, rpo, by=c("date"))
-  doir$av3 <- rollMeanRetrival(doir)
-  doir$DOIr <- ifelse(doir$av3 == 0,0, (doir$IN/doir$av3)*30)
+  if(rpi == 0 || rpo == 0) {
+    doir <- 0
+  } else {
+    doir <- right_join(rpi, rpo, by=c("date")) %>% mutate(IN = ifelse(is.na(IN),0, IN))
+    doir$av3 <- rollMeanRetrival(doir$SO)
+    doir$DOIr <- ifelse(doir$av3 == 0,0, (doir$IN/doir$av3)*30)
+    doir <- doir %>% select(date, DOIr)
+    mp <- left_join(mp, doir, by=c("date"))
+  }
   
-  doir <- doir %>% select(date, DOIr)
-      
+  d <- forecastEstimation(mp)
   
-  mp <- inner_join(mp, doir, by=c("date"))
+  mp <- d %>% select(-yhat_lower, -yhat_upper, -av3, -goal, -temp, z_SO = yhat, z_SI = f_sellin, z_IN = f_in)
   
-  mp$av3 <- NULL  
+  mp[is.na(mp)] <- 0
+  mp %>% mutate(z_SO = ifelse(z_SO < 0, 0, z_SO))
+  mp <- mp %>% mutate(z_SO = ifelse(date <= end$date, 0, z_SO))
+  mp$SO <- mp$z_SO + mp$SO
+  mp$av3 <- rollMeanRetrival(mp$SO)
+  mp$DOIee <- ifelse(mp$date >= end$date, (mp$z_IN/mp$av3)*30, 0)
+  
+  #mp$SO <- mp$z_SO + mp$SO
+  mp$SI <- mp$z_SI + mp$SI
+  mp$IN <- mp$z_IN + mp$IN
+  mp$DOIe <- mp$DOIe + mp$DOIee
+  
+  mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee)
+  
   mp <- gather(mp, type, i_var, 2:ncol(mp))
   mp <- spread(mp, date, i_var)
   
@@ -285,38 +366,38 @@ ui <- dashboardPage(skin = "black",
         solidHeader = T,
         collapsible = T,
         collapsed = T,
-        column(6, 
+        column(12, 
           selectInput("channel",
                       label = "Channel",
                       multiple = T,
                       choices = getUniqueValuesSolo("pos_master", "CHANNEL"),
-                      selected =c('DRUG WHOLESALERS ', 'PHARMACY CHAINS ', 'PRICE CLUBS', 'WHOLESALERS', 'GENERIC', 'SUPERMARKETS ')
+                      selected =c('DRUG WHOLESALERS ', 'PHARMACY CHAINS ', 'PRICE CLUBS', 'WHOLESALERS', 'GENERIC', 'SUPERMARKETS ', 'HOSPITAL SALES ')
                       )
               ),
-        column(6,
+        column(3,
           selectInput("client",
                       label = "Client",
                       choices = getUniqueValues("pos_master", "CLIENT"),
                       selected = '%'
                       )
               ),
-        column(4,
+        column(3,
           selectInput("city",
                       label = "City",
                       choices = getUniqueValues("pos_master", "CITY"),
                       selected = '%'
                       )
               ),
-        column(4,
+        column(3,
           selectInput("state",
                       label = "State",
                       choices = getUniqueValues("pos_master", "STATE"),
                       selected = '%'
                       )
               ),
-        column(4,
+        column(3,
           conditionalPanel(condition = "output.gobernor",
-                           uiOutput("pos")
+                           uiOutput("pos_name")
                            )
         )
       )
@@ -362,10 +443,10 @@ server <- function(input, output, session) {
     }
   })
   
-  output$pos<- renderUI({
-    selectInput("pos",
+  output$pos_name<- renderUI({
+    selectInput("pos_name",
                 label = "Pos Name",
-                choices = getUniqueValuesWithPrecedent("pos_master", "pos", "client", input$client),
+                choices = getUniqueValuesWithPrecedent("pos_master", "pos_name", "client", input$client),
                 selected = '%'
     )
   })
@@ -387,7 +468,7 @@ server <- function(input, output, session) {
                  input$state,
                  input$channel,
                  input$client,
-                 input$pos)
+                 input$pos_name)
   })
   
 
@@ -419,15 +500,17 @@ server <- function(input, output, session) {
       select(date, i_var = one_of(i_var), type) %>% 
       group_by(date, type) %>% 
       summarise(i_var = sum(i_var, na.rm = T)) %>% 
-      spread(type, i_var) %>% 
+      spread(type, i_var, fill = 0) %>% 
       arrange(date)
     
-    mp$av3 <- rollMeanRetrival(mp)
+    mp$av3 <- rollMeanRetrival(mp$SO)
     mp$DOIe <- ifelse(mp$av3 == 0,0, (mp$IN/mp$av3)*30)
     
-    mp$av3 <- NULL
+    #mp$av3 <- NULL
     
-    plotData(mp)
+    d <- forecastEstimation(mp)
+    
+    plotData(d)
 
   })
   
