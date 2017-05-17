@@ -51,6 +51,25 @@ getMaxDate <- function(table){
   dbGetQuery(pool, sql)
 }
 
+getDoiTarget <- function(family, client) {
+  
+  if(dim(family)[1] > 1) {
+    i_family <- 'ALL'
+  } else {
+    i_family <- family$family
+  }
+  
+  if(dim(client)[1] > 1) {
+    i_client <- 'ALL'
+  } else {
+    i_client <- client$client
+  }
+  
+  sql <- sprintf("select target from doi_target where client = ?client and family = ?family")
+  query <- sqlInterpolate(pool, sql, client = i_client, family = i_family)
+  dbGetQuery(pool, query)
+}
+
 dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos_name) {
   
   if(length(i_channel) == 1) {
@@ -122,22 +141,43 @@ plotData <- function(i_data){
   
   end <- getMaxDate('trans_data')
   
-  ggplot2::ggplot(i_data, aes(date)) + 
-    geom_bar(aes(y = IN), stat = "identity", alpha = 0.4, fill = "black") + 
-    geom_bar(aes(y = f_in), stat = "identity", alpha = 0.4, fill = "grey") +
-    geom_line(aes(y = SO, colour = "Sell out")) + 
-    geom_line(aes(y = SI, colour = "Sell In")) +
-    geom_line(aes(y= yhat, colour = "FCST Sell Out"), linetype = 2) +
-    geom_line(aes(y = f_sellin, colour = "FCST Sell In"), linetype = 2 ) +
-    geom_vline(xintercept = as.numeric(as.Date(end$date)), linetype = 2) +
-    geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper), fill = "darkmagenta", alpha = 0.1) +
-    scale_x_date(name = "Dates", date_breaks = '1 month', date_labels = "%b %y") +
-    scale_y_continuous(name = "", labels = comma, breaks = pretty_breaks(n=10)) + 
-    theme(legend.title = element_blank())
+  if('yhat' %in% colnames(i_data)) {
+    ggplot2::ggplot(i_data, aes(date)) + 
+      geom_bar(aes(y = IN), stat = "identity", alpha = 0.6, fill = "black") + 
+      geom_bar(aes(y = f_in), stat = "identity", alpha = 0.6, fill = "grey") +
+      geom_line(aes(y = SO, colour = "Sell out")) + 
+      geom_line(aes(y = SI, colour = "Sell In")) +
+      geom_line(aes(y= yhat, colour = "FCST Sell Out"), linetype = 2) +
+      geom_line(aes(y = f_sellin, colour = "FCST Sell In"), linetype = 2) +
+      geom_vline(xintercept = as.numeric(as.Date(end$date)), linetype = 2) +
+      geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper), fill = "darkmagenta", alpha = 0.2) +
+      scale_x_date(name = "Dates", date_breaks = '1 month', date_labels = "%b %y") +
+      scale_y_continuous(name = "", labels = comma, breaks = pretty_breaks(n=10)) + 
+      theme(legend.title = element_blank())
+  } else {
+    ggplot2::ggplot(i_data, aes(date)) + 
+      geom_bar(aes(y = IN), stat = "identity", alpha = 0.6, fill = "black") + 
+      #geom_bar(aes(y = f_in), stat = "identity", alpha = 0.4, fill = "grey") +
+      geom_line(aes(y = SO, colour = "Sell out")) + 
+      geom_line(aes(y = SI, colour = "Sell In")) +
+      #geom_line(aes(y= yhat, colour = "FCST Sell Out"), linetype = 2) +
+      #geom_line(aes(y = f_sellin, colour = "FCST Sell In"), linetype = 2 ) +
+      #geom_vline(xintercept = as.numeric(as.Date(end$date)), linetype = 2) +
+      #geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper), fill = "darkmagenta", alpha = 0.1) +
+      scale_x_date(name = "Dates", date_breaks = '1 month', date_labels = "%b %y") +
+      scale_y_continuous(name = "", labels = comma, breaks = pretty_breaks(n=10)) + 
+      theme(legend.title = element_blank())
+  }
 }
 
-initSellInCalculation <- function(i_data){
-  i_data$goal <- 70 #fix get goal form db
+initSellInCalculation <- function(i_data, family, client, end){
+  
+  if(is.null(getDoiTarget(family, client)$target)) {
+    i_data$goal <- 0
+  } else {
+    i_data$goal <- getDoiTarget(family, client)$target
+  }
+  
   i_data$av3 <- rollMeanRetrival(i_data$yhat)
   i_data <- mutate(i_data, temp = (av3/30)*goal)
   
@@ -147,32 +187,55 @@ initSellInCalculation <- function(i_data){
   } else {
     i_data <- mutate(i_data, f_sellin = ifelse((temp-(lag(IN)-av3))<0,0,(temp-(lag(IN)-av3))))
     i_data <- mutate(i_data, f_in = lag(IN) + f_sellin - av3)
+    
+    n <- which(i_data$date == end$date) + 1
+    
+    i_data$IN[n] <- i_data$f_in[n]
+    i_data$SI[n] <- i_data$f_sellin[n]
+    
+    j <- n + 1
+    for(i in j:nrow(i_data)) {
+      
+      i_data <- mutate(i_data, f_sellin = ifelse((temp-(lag(IN)-av3))<0,0,(temp-(lag(IN)-av3))))
+      i_data <- mutate(i_data, f_in = lag(IN) + f_sellin - av3)
+      i_data$IN[i] <- i_data$f_in[i]
+      i_data$SI[i] <- i_data$f_sellin[i]
+      
+    }
+    
+    i_data <- i_data %>% mutate(f_in = ifelse(date <= end$date, NA, f_in))
+    i_data <- i_data %>% mutate(f_sellin = ifelse(date <= end$date, NA, f_sellin))
+    
+    i_data <- i_data %>% mutate(IN = ifelse(date > end$date, NA, IN))
+    i_data <- i_data %>% mutate(SI = ifelse(date > end$date, NA, SI))
+    
+    
   }
   return(i_data)
 }
 
-seqSellInCalculation <- function(n, i_data) {
-  if(!'IN' %in% colnames(i_data)) {
-    i_data$f_sellin <- 0
-    i_data$f_in <- 0
-  } else {
-    for(i in 1:n){
-      i_data <- mutate(i_data, f_sellin = ifelse((temp-(lag(f_in)-av3))<0,0,(temp-(lag(f_in)-av3))))
-      i_data <- mutate(i_data, f_in = lag(f_in) + f_sellin - av3)
-    }
-  }
-  return(i_data)
-} 
+#seqSellInCalculation <- function(n, i_data) {
+#  if(!'IN' %in% colnames(i_data)) {
+#    i_data$f_sellin <- 0
+#    i_data$f_in <- 0
+#  } else {
+#    for(i in 1:n){
+#      i_data <- mutate(i_data, f_sellin = ifelse((temp-(lag(f_in)-av3))<0,0,(temp-(lag(f_in)-av3))))
+#      i_data <- mutate(i_data, f_in = lag(f_in) + f_sellin - av3)
+#    }
+#  }
+#  return(i_data)
+#} 
 
-forecastEstimation <- function(i_data){
+forecastEstimation <- function(i_data, doi_data, horizon){
   var <- 'SO'
   if(!var %in% colnames(i_data)) {
     var <- 'SI'
   } 
   
   fcst <- i_data %>% select(ds=date, y=get(var)) #%>% mutate(cap = max(y)*1.1)
-  model <- prophet::prophet(fcst, growth = "linear", yearly.seasonality = T, weekly.seasonality = F, changepoint.prior.scale = 0.6)
-  future <- make_future_dataframe(model, periods = 10, freq = "month") #make periods dynamic
+  model <- prophet::prophet(fcst, growth = "linear", yearly.seasonality = T, weekly.seasonality = F)
+  future <- make_future_dataframe(model, periods = horizon, freq = "month") #make periods dynamic
   #future$cap <- max(fcst$cap)
   forecast <- predict(model, future)
   #plot(model, forecast)
@@ -182,14 +245,17 @@ forecastEstimation <- function(i_data){
   
   end <- getMaxDate('trans_data')
   
-  d <- initSellInCalculation(d)
-  n <- which(d$date == end$date) - 1
-  d <- seqSellInCalculation(n, d)
+  doi_client <- doi_data %>% distinct(client)
+  doi_family <- doi_data %>% distinct(family)
+  
+  d <- initSellInCalculation(d, doi_family, doi_client, end)
+  #n <- which(d$date == end$date) - 1
+  #d <- seqSellInCalculation(n, d)
   
   return(d)
 }
 
-tablesRetrival <- function(raw_data, i_data) {
+tablesRetrival <- function(raw_data, i_data, forecast_switch, horizon) {
   #start <- input$dti[1]
   #end <- input$dti[2]
   
@@ -246,24 +312,57 @@ tablesRetrival <- function(raw_data, i_data) {
     mp <- left_join(mp, doir, by=c("date"))
   }
   
-  d <- forecastEstimation(mp)
+  doi_data <- i_data %>% distinct(family, client)
   
-  mp <- d %>% select(-yhat_lower, -yhat_upper, -av3, -goal, -temp, z_SO = yhat, z_SI = f_sellin, z_IN = f_in)
+  if(forecast_switch == "with_forecast") {
+    
+    d <- forecastEstimation(mp, doi_data, horizon)
+    mp <- d %>% select(-yhat_lower, -yhat_upper, -av3, -goal, -temp, z_SO = yhat, z_SI = f_sellin, z_IN = f_in)
+    
+    end <- getMaxDate('trans_data')
+    mp[is.na(mp)] <- 0
+    mp <- mp %>% mutate(z_SO = ifelse(z_SO < 0, 0, z_SO))
+    mp <- mp %>% mutate(z_SO = ifelse(date <= end$date, 0, z_SO))
+    if('SO' %in% colnames(mp)){
+      mp$SO <- mp$z_SO + mp$SO
+      mp$av3 <- rollMeanRetrival(mp$SO)
+      mp$DOIee <- ifelse(mp$date >= end$date, (mp$z_IN/mp$av3)*30, 0)
+    } else {
+      mp$SO <- mp$z_SO
+      mp$av3 <- rollMeanRetrival(mp$SO)
+      mp$DOIee <- ifelse(mp$date >= end$date, (mp$z_IN/mp$av3)*30, 0)
+    }
+    
+    #mp$SO <- mp$z_SO + mp$SO
+    mp$SI <- mp$z_SI + mp$SI
+    
+    if('IN' %in% colnames(mp)) {
+      mp$IN <- mp$z_IN + mp$IN
+    } else {
+      mp$IN <- mp$z_IN
+    }
+    
+    mp$DOIe <- mp$DOIe + mp$DOIee
+    
+    if('DOIr' %in% colnames(mp)){
+      p <- mp[which(mp$date >= end$date),]
+      lp <- p[which(p$date == end$date),7]/p[which(p$date == end$date),6]
+      mp$DOIrr <- mp$DOIee*lp
+      mp$DOIrr <- ifelse(mp$date <= end$date, 0, mp$DOIrr)
+      mp$DOIr <- mp$DOIr + mp$DOIrr
+    } else {
+      mp$DOIrr <- 0
+    }
+    
+    
+    mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee, -DOIrr)
+    
+    
+  } else {
+    d <- mp
+    mp <- d %>% select(-av3)
+  }
   
-  end <- getMaxDate('trans_data')
-  mp[is.na(mp)] <- 0
-  mp %>% mutate(z_SO = ifelse(z_SO < 0, 0, z_SO))
-  mp <- mp %>% mutate(z_SO = ifelse(date <= end$date, 0, z_SO))
-  mp$SO <- mp$z_SO + mp$SO
-  mp$av3 <- rollMeanRetrival(mp$SO)
-  mp$DOIee <- ifelse(mp$date >= end$date, (mp$z_IN/mp$av3)*30, 0)
-  
-  #mp$SO <- mp$z_SO + mp$SO
-  mp$SI <- mp$z_SI + mp$SI
-  mp$IN <- mp$z_IN + mp$IN
-  mp$DOIe <- mp$DOIe + mp$DOIee
-  
-  mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee)
   
   mp <- gather(mp, type, i_var, 2:ncol(mp))
   mp <- spread(mp, date, i_var)
@@ -292,7 +391,7 @@ tablesRetrival <- function(raw_data, i_data) {
 
 ###
 
-CustomHeader <- dashboardHeader(title = "Prophet Data Management - MJN -")
+CustomHeader <- dashboardHeader(title = "- MJN Prophet (beta) -")
 CustomHeader$children[[3]]$children <- list(
   div(style="float:right;height:50px;margin-right:5px;padding-top:5px;", downloadButton("csv", "CSV")),
   div(style="float:right;height:50px;margin-right:5px;padding-top:5px;", downloadButton("tab", "TAB")) 
@@ -311,7 +410,12 @@ ui <- dashboardPage(skin = "black",
         radioButtons("gobernor",
                      label = h3("Pos Data"),
                      choices = list("With Pos Info" = 1, "Without Pos Info" = 2), selected = 2
-                     )
+                     ),
+        radioButtons("with_forecast",
+                     label = h3("Include Forecast"),
+                     choices = list("With Forecast" = "with_forecast", "WithOut Forecast" = "without_forecast"), selected = "without_forecast"
+                     ),
+        uiOutput("forecast_horizon")
         )
   ),
   dashboardBody(
@@ -452,6 +556,22 @@ server <- function(input, output, session) {
     )
   })
   
+  output$forecast_horizon<- renderUI({
+    
+    if(is.null(input$with_forecast))
+      return()
+    
+    switch(input$with_forecast,
+    
+    "with_forecast" = sliderInput("forecast_horizon",
+                       label = "Forecast Horizon",
+                       min = 3, 
+                       max = 24, 
+                       value = 10)
+    )
+  })
+  
+  
   mp <- reactive({
     
     gob_table <- 'ag_pos_data'
@@ -474,15 +594,15 @@ server <- function(input, output, session) {
   
 
   output$raw_qty <- DT::renderDataTable({
-    tablesRetrival(input$raw_data, mp())
+    tablesRetrival(input$raw_data, mp(), input$with_forecast, input$forecast_horizon)
   })
   
   output$raw_ton <- DT::renderDataTable({
-    tablesRetrival(input$raw_data, mp())
+    tablesRetrival(input$raw_data, mp(), input$with_forecast, input$forecast_horizon)
   })
   
   output$raw_val <- DT::renderDataTable({
-    tablesRetrival(input$raw_data, mp())
+    tablesRetrival(input$raw_data, mp(), input$with_forecast, input$forecast_horizon)
   })
   
   output$pto <- renderPlot({
@@ -508,8 +628,12 @@ server <- function(input, output, session) {
     mp$DOIe <- ifelse(mp$av3 == 0,0, (mp$IN/mp$av3)*30)
     
     #mp$av3 <- NULL
-    
-    d <- forecastEstimation(mp)
+    doi_data <- mp() %>% distinct(family, client)
+    if (input$with_forecast == "with_forecast") {
+      d <- forecastEstimation(mp, doi_data, input$forecast_horizon)
+    } else {
+      d <- mp
+    }
     
     plotData(d)
 
@@ -533,7 +657,8 @@ server <- function(input, output, session) {
     }
   )
   
-  outputOptions(output, "gobernor", suspendWhenHidden = FALSE)  
+  outputOptions(output, c("gobernor"), suspendWhenHidden = FALSE)
+  #outputOptions(output, "with_forecast", suspendWhenHidden = FALSE)  
   
 }
 
