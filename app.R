@@ -70,7 +70,7 @@ getDoiTarget <- function(family, client) {
   dbGetQuery(pool, query)
 }
 
-dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos_name) {
+dataRetrival <- function(sql_table, start, end, i_category, i_brand, i_format, i_flavor, i_uom, i_sku, i_city, i_state, i_channel, i_client, i_pos_name) {
   
   if(length(i_channel) == 1) {
     #ff <- paste0('channel %like% ', paste0("'", i_channel, "'"))
@@ -88,6 +88,7 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
 
     src_pool(pool) %>% tbl(sql_table) %>% 
       filter(date >= start & date <= end &
+               family %like% i_category &
                brand %like% i_brand &
                format %like% i_format &
                flavor %like% i_flavor &
@@ -103,6 +104,7 @@ dataRetrival <- function(sql_table, start, end, i_brand, i_format, i_flavor, i_u
     
     src_pool(pool) %>% tbl(sql_table) %>% 
       filter(date >= start & date <= end &
+               family %like% i_category &
                brand %like% i_brand &
                format %like% i_format &
                flavor %like% i_flavor &
@@ -233,8 +235,8 @@ forecastEstimation <- function(i_data, doi_data, horizon){
     var <- 'SI'
   } 
   
-  fcst <- i_data %>% select(ds=date, y=get(var)) #%>% mutate(cap = max(y)*1.1)
-  model <- prophet::prophet(fcst, growth = "linear", yearly.seasonality = T, weekly.seasonality = F)
+  fcst <- i_data %>% select(ds=date, y=get(var)) #%>% mutate(cap = max(y)*1.1)  
+  model <- prophet::prophet(fcst, growth = 'linear', yearly.seasonality = 'TRUE', weekly.seasonality = 'FALSE', n.changepoints = 12)
   future <- make_future_dataframe(model, periods = horizon, freq = "month") #make periods dynamic
   #future$cap <- max(fcst$cap)
   forecast <- predict(model, future)
@@ -428,14 +430,21 @@ ui <- dashboardPage(skin = "black",
         solidHeader = T,
         collapsible = T,
         collapsed = T,
-          column(6,
+          column(4,
+                 selectInput("category",
+                             label = "Category",
+                             choices = getUniqueValues("codes_master", "FAMILY"),
+                             selected = '%'
+                 )
+          ),
+          column(4,
                  selectInput("brand",
                              label = "Brand",
                              choices = getUniqueValues("codes_master", "BRAND"),
                              selected = '%'
                  )
           ),
-          column(6,
+          column(4,
                  selectInput("format",
                              label = "Format",
                              choices = getUniqueValues("codes_master", "FORMAT"),
@@ -579,7 +588,8 @@ server <- function(input, output, session) {
     
     dataRetrival(gob_table, 
                  as.character(input$dti[1]), 
-                 as.character(input$dti[2]), 
+                 as.character(input$dti[2]),
+                 input$category,
                  input$brand, 
                  input$format, 
                  input$flavor, 
