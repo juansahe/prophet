@@ -372,8 +372,8 @@ tablesRetrival <- function(raw_data, i_data, forecast_switch, horizon) {
     }
     
     
-    #mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee, -DOIrr)
-    mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee)
+    mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee, -DOIrr)
+    #mp <- mp %>% select(-z_SO, -z_SI, -z_IN, -av3, -DOIee)
     
     
   } else {
